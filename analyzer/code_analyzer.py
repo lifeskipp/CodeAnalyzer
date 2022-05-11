@@ -1,152 +1,168 @@
-import os
 import re
+import os
 import sys
 
 
-class CodeAnalyzer:
-    def __init__(self):
-        self.args = sys.argv
-        self.path = ''.join(self.args[1:])
-        self.directory = None
-        self.list_files = None
-        self.file_to_open = None
-        self.current_line_string = None
-        self.current_line_no = 1
-        self.blanklines_count = 0
-        self.split_code_comment = None
-
-    def dir_or_file(self):
-        dot = self.path.find('.')
-        if (dot > 0) and (self.path[dot+1:] == 'py'):
-            self.line_reader()
-        if dot == -1:
-            self.directory = self.path
-            self.list_files = sorted(os.listdir(self.path))
-            self.file_reader()
-
-    def file_reader(self):
-        for file in self.list_files:
-            dot = file.find('.')
-            if (dot > 0) and (file[dot+1:] == 'py'):
-                self.current_line_no = 1
-                self.file_to_open = file
-                self.path = os.path.join(self.directory, file)
-                self.line_reader()
-
-    def line_reader(self):
-        with open(self.path, "r") as file:
-            for line in file.readlines():
-                self.current_line_string = line
-                self.code_analyzer()
-                self.current_line_no += 1
-
-    def code_analyzer(self):
-        self.length_checker()  # S001
-        self.indent_checker()  # S002
-        self.semicolon_checker()  # S003
-        self.space_checker()  # S004
-        self.todo_checker()  # S005
-        self.blanklines_checker()  # S006
-        self.spaces_after_construction()  # S007
-
-    def length_checker(self):
-        length_of_line = len(self.current_line_string)
-        if length_of_line > 79:
-            self.error_message("S001")
-
-    def indent_checker(self):
-        string_space_count = 0
-        for x in self.current_line_string:
-            if x == " ":
-                string_space_count += 1
-            elif x != " ":
-                break
-        if string_space_count % 4 != 0:
-            self.error_message("S002")
-
-    def code_comment(self, access):
-        self.split_code_comment = self.current_line_string.split("#", 1)
-        if access == "code":
-            return self.split_code_comment[0]
-        elif access == "comment":
-            return self.split_code_comment[1]
-
-    def semicolon_checker(self):
-        inside_string = False
-        for x in self.code_comment("code"):
-            if x == "'" or x == '"':
-                if not inside_string:
-                    inside_string = True
-                    continue
-                if inside_string:
-                    inside_string = False
-                    continue
-            if x == ";" and inside_string is False:
-                self.error_message("S003")
-                break
-
-    def space_checker(self):
-        assert len(self.split_code_comment) == 1 or len(self.split_code_comment) == 2
-        if len(self.split_code_comment) == 2 and self.split_code_comment[0] != "":
-            reverse_space_count = 0
-            for x in reversed(self.code_comment("code")):
-                if x == " ":
-                    reverse_space_count += 1
-                else:
-                    break
-            if reverse_space_count < 2:
-                self.error_message("S004")
-        else:
-            pass
-
-    def todo_checker(self):
-        assert len(self.split_code_comment) == 1 or len(self.split_code_comment) == 2
-        if len(self.split_code_comment) == 2 and \
-                self.split_code_comment[1].upper().find("TODO") != -1:
-            self.error_message("S005")
-        else:
-            pass
-
-    def blanklines_checker(self):
-        assert len(self.split_code_comment) == 1 or len(self.split_code_comment) == 2
-        if self.blanklines_count == 3:
-            self.blanklines_count = 0
-            self.error_message("S006")
-        elif len(self.split_code_comment) == 1 and self.split_code_comment[0] == "\n":
-            self.blanklines_counter("increase")
-        else:
-            self.blanklines_counter("reset")
-
-    def blanklines_counter(self, action):
-        if action == "increase":
-            self.blanklines_count += 1
-        else:
-            self.blanklines_count = 0
-
-    def spaces_after_construction(self):
-        temp_def = r' *def  +'
-        temp_class = r' *class  +'
-        if re.match(temp_def, self.current_line_string) is not None:
-            self.error_message("S007")
-        elif re.match(temp_class, self.current_line_string) is not None:
-            self.error_message("S007")
-
-    def error_message(self, code):
-        error_dict = {"S001": "Line Too Long",
-                      "S002": "Indentation is not a multiple of four",
-                      "S003": "Unnecessary semicolon",
-                      "S004": "Less than two spaces before inline comments",
-                      "S005": "TODO found",
-                      "S006": "More than two blank lines used before this line",
-                      "S007": "Too many spaces after construction_name (def or class)"
-                      }
-        print("{}: Line {}: {} {}".format(self.path, self.current_line_no, code, error_dict.get(code)))
+class StaticCodeAnalyzerError(Exception):
+    pass
 
 
-def main():
-    file_to_check = CodeAnalyzer()
-    file_to_check.dir_or_file()
+class TooLongLineError(StaticCodeAnalyzerError):
+    pass
+
+
+class IndentationError(StaticCodeAnalyzerError):
+    pass
+
+
+class UnnecessarySemicolonError(StaticCodeAnalyzerError):
+    pass
+
+
+class NotEnoughSpacesError(StaticCodeAnalyzerError):
+    pass
+
+
+class TODOFoundError(StaticCodeAnalyzerError):
+    pass
+
+
+class TooManyBlankLinesError(StaticCodeAnalyzerError):
+    pass
+
+
+class TooManySpaceConstructionNameError(StaticCodeAnalyzerError):
+    pass
+
+
+class CamelCaseError(StaticCodeAnalyzerError):
+    pass
+
+
+class SnakeCaseError(StaticCodeAnalyzerError):
+    pass
+
+
+class StaticCodeAnalyzer:
+
+    def __init__(self, path_file: str):
+        self.path_file = path_file
+        self.__check_funcs = [
+            self.__check_long,
+            self.__check_indentation,
+            self.__check_semicolon,
+            self.__check_spaces,
+            self.__check_todo_existing,
+            self.__check_blank_lines,
+            self.__check_construction_def,
+            self.__check_construction_class,
+            self.__check_camel_case,
+            self.__check_snake_case
+        ]
+        self.__count_blank_lines_in_row = 0
+
+    def check_file(self):
+        with open(self.path_file, 'r') as f:
+            number_line = 1
+            for line in f:
+                self.__check_errors(number_line, line)
+                number_line += 1
+
+    def __check_errors(self, number_line, line):
+        for func in self.__check_funcs:
+            try:
+                func(line)
+            except StaticCodeAnalyzerError as err:
+                self.__print_error(self.path_file, number_line, err.args[0], err.args[1])
+
+    @staticmethod
+    def __print_error(file, number_line, code, error):
+        print("{}: Line {}: {} {}".format(file, number_line, code, error))
+
+    @staticmethod
+    def __check_long(line):
+        long = 79
+        if len(line) > long:
+            raise TooLongLineError('S001', "Too long")
+
+    @staticmethod
+    def __check_indentation(line):
+        if line != '\n' and (len(line) - len(line.lstrip())) % 4:
+            raise IndentationError('S002', "Indentation is not a multiple of four")
+
+    @staticmethod
+    def __check_semicolon(line):
+        parts_line = line.split('#')
+        if parts_line[0].rstrip("\n").rstrip(" ").endswith(";"):
+            raise UnnecessarySemicolonError('S003', "Unnecessary semicolon")
+
+    @staticmethod
+    def __check_spaces(line):
+        if re.match(r"[^#]*[^ ]( ?#)", line):
+            raise NotEnoughSpacesError('S004', "At least two spaces required before inline")
+
+    @staticmethod
+    def __check_todo_existing(line):
+        if re.search(r'(?i)# *todo', line):
+            raise TODOFoundError('S005', "TODO found")
+
+    def __check_blank_lines(self, line):
+        if line.rstrip('\n') == "":
+            self.__count_blank_lines_in_row += 1
+        if line.rstrip('\n') != "" and self.__count_blank_lines_in_row > 2:
+            self.__count_blank_lines_in_row = 0
+            raise TooManyBlankLinesError('S006', "More than two blank lines preceding a code line")
+        if line.rstrip('\n') != "":
+            self.__count_blank_lines_in_row = 0
+
+    @staticmethod
+    def __check_construction_def(line):
+        error_object = re.match(r'\s*\b(def)\s{2,}\w+\(\w*\):$', line)
+        if error_object:
+            raise TooManySpaceConstructionNameError("S007", f"Too many spaces after '{error_object.group(1)}'")
+
+    @staticmethod
+    def __check_construction_class(line):
+        error_object = re.match(r'\b(class)\s{2,}\w*(\(\w+\))?:$', line)
+        if error_object:
+            raise TooManySpaceConstructionNameError("S007", f"Too many spaces after '{error_object.group(1)}'")
+
+    @staticmethod
+    def __check_camel_case(line):
+        error_object = re.match(r'\bclass\s+([^A-Z]([a-z_\d-]|\d)*)(\(\w+\))?:$', line)
+        if error_object:
+            raise CamelCaseError("S008", f"Class name '{error_object.group(1)}' should use CamelCase")
+
+    @staticmethod
+    def __check_snake_case(line):
+        any_func = re.match(r'\bdef\s+(.+)\(.*\):$', line)
+        if any_func:
+            correct_func = re.match(r'\bdef\s+([a-z\d_]+)\(.*\):$', line)
+            if correct_func is None:
+                raise SnakeCaseError("S009", f"Function name '{any_func.group(1)}' should use snake_case")
 
 
 if __name__ == "__main__":
-    main()
+
+    args = sys.argv
+    input_path = args[1]
+
+
+    def call_analyzer_error(path):
+        error_checking = StaticCodeAnalyzer(path)
+        error_checking.check_file()
+        return None
+
+
+    if os.path.isdir(input_path):
+
+        for root, dirs, files in os.walk(input_path):
+            for file_name in files:
+                if file_name.endswith(".py") is False:
+                    continue
+
+                file_path = os.path.join(root, file_name)
+                call_analyzer_error(file_path)
+
+    else:
+        call_analyzer_error(input_path)
